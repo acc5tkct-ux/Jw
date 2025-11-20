@@ -1,0 +1,306 @@
+name: "🚀 SEVER vanmanhgaming - Stable RDP"
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Thời gian sử dụng'
+        required: false
+        default: '1_Giờ_30_Phút_(90m)'
+        type: choice
+        options:
+          - '30_Phút_(30m)'
+          - '1_Giờ_(60m)'
+          - '1_Giờ_30_Phút_(90m)'
+          - '2_Giờ_(120m)'
+          - '2_Giờ_30_Phút_(150m)'
+          - '3_Giờ_(180m)'
+          - '3_Giờ_30_Phút_(210m)'
+          - '4_Giờ_(240m)'
+          - '4_Giờ_30_Phút_(270m)'
+          - '5_Giờ_(300m)'
+          - '5_Giờ_30_Phút_(330m)'
+          - '6_Giờ_(360m)'
+
+jobs:
+  Vanmanhgaming-RDP-Setup:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+
+      - name: '01 - Init encoding'
+        shell: powershell
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+          chcp 65001 > $null
+
+      - name: '02 - Banner'
+        shell: powershell
+        run: |
+          Write-Host ''
+          Write-Host '===========================================' -ForegroundColor Cyan
+          Write-Host '  🚀 SEVER vanmanhgaming - Windows RDP' -ForegroundColor Yellow
+          Write-Host ('  Thời gian đã chọn: {0}' -f '${{ github.event.inputs.duration }}') -ForegroundColor Magenta
+          Write-Host '===========================================' -ForegroundColor Cyan
+
+      - name: '03 - Configure RDP & Firewall'
+        shell: powershell
+        run: |
+          try {
+            Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0 -Force
+            Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 0 -Force
+            Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'SecurityLayer' -Value 0 -Force
+            netsh advfirewall firewall add rule name="RDP-Premium" dir=in action=allow protocol=TCP localport=3389 2>$null | Out-Null
+            netsh advfirewall firewall add rule name="RDP-Premium-Out" dir=out action=allow protocol=TCP localport=3389 2>$null | Out-Null
+            Set-Service -Name TermService -StartupType Automatic -ErrorAction SilentlyContinue
+            Start-Service TermService -ErrorAction SilentlyContinue
+            Write-Host 'RDP configuration complete.' -ForegroundColor Green
+          } catch {
+            Write-Warning ("RDP configuration warning: {0}" -f $_.Exception.Message)
+          }
+
+      # ⭐⭐⭐ FIX RDP: Không hiển thị USER / PASS ⭐⭐⭐
+      - name: '03.5 - FIX RDP No Login Screen'
+        shell: powershell
+        run: |
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v SecurityLayer /t REG_DWORD /d 0 /f
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+
+          Stop-Service TermService -Force
+          Start-Service TermService
+
+          Write-Host "🔥 FIXED: RDP will now show login screen!" -ForegroundColor Green
+
+      - name: '04 - Create premium user (safe)'
+        shell: powershell
+        run: |
+          $UserName = 'vanmanhgaming'
+          if ($env:CUSTOM_RDP_PASS) {
+            $PasswordPlain = $env:CUSTOM_RDP_PASS
+          } else {
+            function New-PremiumPassword {
+              $upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+              $lower = 'abcdefghijkmnpqrstuvwxyz'
+              $digits = '23456789'
+              $all = $upper + $lower + $digits
+              $chars = @()
+              $chars += $upper[(Get-Random -Minimum 0 -Maximum $upper.Length)]
+              $chars += $lower[(Get-Random -Minimum 0 -Maximum $lower.Length)]
+              $chars += $digits[(Get-Random -Minimum 0 -Maximum $digits.Length)]
+              for ($i=1; $i -le 5; $i++) { $chars += $all[(Get-Random -Minimum 0 -Maximum $all.Length)] }
+              return -join ($chars | Sort-Object { Get-Random })
+            }
+            $PasswordPlain = New-PremiumPassword
+          }
+
+          try {
+            if (Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue) {
+              try { Remove-LocalUser -Name $UserName -ErrorAction SilentlyContinue } catch {}
+            }
+          } catch {}
+
+          try {
+            $secure = ConvertTo-SecureString $PasswordPlain -AsPlainText -Force
+            New-LocalUser -Name $UserName -Password $secure -AccountNeverExpires -Description 'vanmanhgaming Premium Account' -ErrorAction Stop
+
+            Add-LocalGroupMember -Group 'Administrators' -Member $UserName -ErrorAction SilentlyContinue
+            Add-LocalGroupMember -Group 'Remote Desktop Users' -Member $UserName -ErrorAction SilentlyContinue
+            Add-LocalGroupMember -Group 'Users' -Member $UserName -ErrorAction SilentlyContinue
+            Enable-LocalUser -Name $UserName -ErrorAction SilentlyContinue
+
+            echo "RDP_USER=$UserName" >> $env:GITHUB_ENV
+            echo "RDP_PASS=$PasswordPlain" >> $env:GITHUB_ENV
+
+            $PasswordPlain | Out-File -FilePath "$env:TEMP\rdp_password.txt" -Encoding ASCII
+            Write-Host ('User {0} created.' -f $UserName) -ForegroundColor Green
+          } catch {
+            Write-Error ("Create user failed: {0}" -f $_.Exception.Message)
+            exit 1
+          }
+
+      # (Các phần sau giữ nguyên)
+
+      - name: '05 - Download helper (Download-Retry) - create script'
+        shell: powershell
+        run: |
+          $script = @'
+function Download-Retry {
+  param(
+    [Parameter(Mandatory=$true)][string]$Url,
+    [Parameter(Mandatory=$true)][string]$OutFile,
+    [int]$Tries = 5,
+    [int]$Delay = 5
+  )
+  for ($i = 1; $i -le $Tries; $i++) {
+    try {
+      Write-Host ("Attempt {0}/{1}: downloading {2} ..." -f $i, $Tries, $Url)
+      if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        curl.exe -L $Url -o $OutFile
+      } else {
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 120
+      }
+      if (Test-Path $OutFile) {
+        Write-Host ("Downloaded to {0}" -f $OutFile)
+        return $true
+      }
+    } catch {
+      Write-Warning ("Download attempt {0} failed: {1}" -f $i, $_.Exception.Message)
+    }
+    Start-Sleep -Seconds $Delay
+  }
+  return $false
+}
+'@
+          Set-Content -Path "$env:TEMP\download-retry.ps1" -Value $script -Encoding UTF8
+          Write-Host 'Download helper script created.' -ForegroundColor Green
+
+      - name: '06 - Install Google Chrome (robust, retry)'
+        shell: powershell
+        run: |
+          . $env:TEMP\download-retry.ps1
+          $out = "$env:TEMP\chrome_installer.exe"
+          $url = 'https://dl.google.com/chrome/install/latest/chrome_installer.exe'
+          if (Download-Retry -Url $url -OutFile $out -Tries 6 -Delay 5) {
+            try {
+              Start-Process -FilePath $out -ArgumentList '/silent','/install' -Wait -NoNewWindow -ErrorAction Stop
+              Write-Host 'Chrome installed (or installer finished).' -ForegroundColor Green
+            } catch {
+              Write-Warning ("Chrome install returned warning: {0}" -f $_.Exception.Message)
+            }
+          } else {
+            Write-Warning 'Chrome download failed after retries - skipping.'
+          }
+
+      - name: '07 - Install Discord (robust, retry)'
+        shell: powershell
+        run: |
+          . $env:TEMP\download-retry.ps1
+          $out = "$env:TEMP\discord_installer.exe"
+          $url = 'https://discord.com/api/download?platform=win'
+          if (Download-Retry -Url $url -OutFile $out -Tries 6 -Delay 5) {
+            try {
+              Start-Process -FilePath $out -ArgumentList '/S' -Wait -NoNewWindow -ErrorAction Stop
+              Write-Host 'Discord installed (silent).' -ForegroundColor Green
+            } catch {
+              Write-Warning 'Discord silent install failed'
+            }
+          } else {
+            Write-Warning 'Discord download failed after retries - skipping.'
+          }
+
+      - name: '08 - Tailscale (optional) - uses secret TAILSCALE_AUTH_KEY if present'
+        shell: powershell
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          if ($env:TAILSCALE_AUTH_KEY) {
+            try {
+              . $env:TEMP\download-retry.ps1
+              $msi = "$env:TEMP\tailscale.msi"
+              if (Download-Retry -Url 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile $msi -Tries 5 -Delay 5) {
+                Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -NoNewWindow
+                Start-Sleep -Seconds 6
+                & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=("gh-vanmanhgaming-" + $env:GITHUB_RUN_ID) --accept-routes --accept-dns --reset
+                Start-Sleep -Seconds 6
+                $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
+                if ($ip -and $ip -match '\d+\.\d+\.\d+\.\d+') {
+                  echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+                } else {
+                  Write-Warning 'Tailscale started but IP not available.'
+                }
+              } else {
+                Write-Warning 'Tailscale download/install failed.'
+              }
+            } catch {
+              Write-Warning ("Tailscale step warning: {0}" -f $_.Exception.Message)
+            }
+          } else {
+            Write-Host 'No TAILSCALE_AUTH_KEY secret found - skipping Tailscale setup.' -ForegroundColor Yellow
+          }
+
+      - name: '09 - Verify Tailscale & RDP connectivity (if Tailscale used)'
+        shell: powershell
+        run: |
+          if ($env:TAILSCALE_IP) {
+            Write-Host ("Testing RDP connectivity to {0}:3389" -f $env:TAILSCALE_IP)
+            $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+            if ($test.TcpTestSucceeded) {
+              Write-Host 'RDP port reachable via Tailscale.' -ForegroundColor Green
+            } else {
+              Write-Warning 'RDP port not reachable via Tailscale.'
+            }
+          } else {
+            Write-Host 'No TAILSCALE_IP to test (skipped).' -ForegroundColor Yellow
+          }
+
+      - name: '10 - Cleanup temp files (safe)'
+        if: always()
+        shell: powershell
+        run: |
+          Remove-Item "$env:TEMP\chrome_installer.exe" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:TEMP\discord_installer.exe" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:TEMP\tailscale.msi" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:TEMP\rdp_password.txt" -Force -ErrorAction SilentlyContinue
+
+      - name: '11 - Show final connection info'
+        shell: powershell
+        run: |
+          $host = $env:TAILSCALE_IP
+          if (-not $host) {
+            $ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.*' -and $_.IPAddress -ne '127.0.0.1' }
+            if ($ips.Count -gt 0) { $host = $ips[0].IPAddress } else { $host = 'localhost' }
+          }
+          $user = $env:RDP_USER
+          $pass = $env:RDP_PASS
+
+          Write-Host ''
+          Write-Host '┌───────────────────────────────────────────┐' -ForegroundColor Cyan
+          Write-Host ('│   🎉 KẾT NỐI THÀNH CÔNG!')
+          Write-Host ('│   Host: {0}' -f $host)
+          Write-Host ('│   User: {0}' -f $user)
+          Write-Host ('│   Pass: {0}' -f $pass)
+          Write-Host '└───────────────────────────────────────────┘' -ForegroundColor Cyan
+
+          echo "RDP_HOST=$host" >> $env:GITHUB_ENV
+
+      - name: '12 - Keep alive & monitor'
+        shell: powershell
+        run: |
+          $dur = '${{ github.event.inputs.duration }}'
+          switch ($dur) {
+            '30_Phút_(30m)' { $minutes = 30 }
+            '1_Giờ_(60m)' { $minutes = 60 }
+            '1_Giờ_30_Phút_(90m)' { $minutes = 90 }
+            '2_Giờ_(120m)' { $minutes = 120 }
+            '2_Giờ_30_Phút_(150m)' { $minutes = 150 }
+            '3_Giờ_(180m)' { $minutes = 180 }
+            '3_Giờ_30_Phút_(210m)' { $minutes = 210 }
+            '4_Giờ_(240m)' { $minutes = 240 }
+            '4_Giờ_30_Phút_(270m)' { $minutes = 270 }
+            '5_Giờ_(300m)' { $minutes = 300 }
+            '5_Giờ_30_Phút_(330m)' { $minutes = 330 }
+            '6_Giờ_(360m)' { $minutes = 360 }
+            default { $minutes = 90 }
+          }
+
+          $end = (Get-Date).AddMinutes($minutes)
+          Write-Host "Runner active until $end"
+
+          while ((Get-Date) -lt $end) {
+            Start-Sleep -Seconds 30
+          }
+
+      - name: '13 - Final cleanup'
+        if: always()
+        shell: powershell
+        run: |
+          try { & "$env:ProgramFiles\Tailscale\tailscale.exe" down --accept-risk=all } catch {}
+          try { netsh advfirewall firewall delete rule name="RDP-Premium" } catch {}
+          try { netsh advfirewall firewall delete rule name="RDP-Premium-Out" } catch {}
+          try { Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 1 } catch {}
+          try { Stop-Service -Name TermService } catch {}
+          Write-Host "Final cleanup done."
