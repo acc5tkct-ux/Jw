@@ -1,0 +1,102 @@
+name: "🚀 RDP - ngancute Premium"
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Thời gian sử dụng"
+        required: true
+        default: "1_Giờ_(60m)"
+        type: choice
+        options:
+          - "30_Phút_(30m)"
+          - "1_Giờ_(60m)"
+          - "1_Giờ_30_Phút_(90m)"
+          - "2_Giờ_(120m)"
+          - "3_Giờ_(180m)"
+          - "4_Giờ_(240m)"
+          - "6_Giờ_(360m)"
+
+jobs:
+  Setup-RDP:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+
+      - name: Init UTF-8
+        run: chcp 65001
+
+      - name: Banner
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "==========================================="
+          Write-Host " 🚀 RDP Premium - ngancute"
+          Write-Host " ⏳ Thời gian: ${{ github.event.inputs.duration }}"
+          Write-Host "==========================================="
+
+      - name: Enable RDP + Firewall
+        shell: powershell
+        run: |
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v SecurityLayer /t REG_DWORD /d 0 /f
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          netsh advfirewall firewall add rule name="RDP-Out" dir=out action=allow protocol=TCP localport=3389
+          Start-Service TermService
+
+      - name: Create Premium User
+        shell: powershell
+        run: |
+          $user = "ngancute"
+          $pass = "ngan@1212"
+          $secure = ConvertTo-SecureString $pass -AsPlainText -Force
+
+          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
+          }
+
+          New-LocalUser -Name $user -Password $secure -Description "Premium RDP Account"
+          Add-LocalGroupMember -Group "Administrators" -Member $user
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
+
+          echo "RDP_USER=$user" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
+
+      - name: Show Login Info
+        shell: powershell
+        run: |
+          $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+            $_.IPAddress -notlike "169.*" -and $_.IPAddress -ne "127.0.0.1"
+          })[0].IPAddress
+
+          Write-Host ""
+          Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          Write-Host " 🎉 RDP READY!"
+          Write-Host " 🌐 IP:   $ip"
+          Write-Host " 👤 User: $env:RDP_USER"
+          Write-Host " 🔑 Pass: $env:RDP_PASS"
+          Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Keep Alive
+        shell: powershell
+        run: |
+          $d = "${{ github.event.inputs.duration }}"
+          switch ($d) {
+            "30_Phút_(30m)" { $m = 30 }
+            "1_Giờ_(60m)" { $m = 60 }
+            "1_Giờ_30_Phút_(90m)" { $m = 90 }
+            "2_Giờ_(120m)" { $m = 120 }
+            "3_Giờ_(180m)" { $m = 180 }
+            "4_Giờ_(240m)" { $m = 240 }
+            "6_Giờ_(360m)" { $m = 360 }
+            default { $m = 60 }
+          }
+
+          $end = (Get-Date).AddMinutes($m)
+          Write-Host "⏳ Runner sẽ chạy tới: $end"
+
+          while ((Get-Date) -lt $end) {
+            Start-Sleep 60
+          }
